@@ -10,34 +10,22 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22' # Требуемая версия для сборки AmneziaWG
-
-      - name: Compile AmneziaWG Binary for ARM64
+      - name: Compile Code via Makefile
         run: |
-          # Запускаем компиляцию под архитектуру MikroTik RB5009
-          id=$(docker create -v /go alpine:3.18)
-          docker cp $id:/go ./gopath
-          docker rm $id
-          
+          # Используем готовое Docker-окружение для сборки Go-кода под arm64
           docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -v ${{ github.workspace }}/gopath:/go \
-            -e GOPATH=/go \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
             -e GOOS=linux \
             -e GOARCH=arm64 \
-            -w /app \
             golang:1.22-alpine \
-            sh -c "apk add --no-cache make git tools && make build"
+            sh -c "apk add --no-cache make git && make build-go"
 
-      - name: Create Valid Dockerfile
+      - name: Create Final Dockerfile
         run: |
-          # Создаем Dockerfile, который скопирует именно скомпилированные бинарники
+          # Собираем минимальный и правильный контейнер для MikroTik
           echo "FROM alpine:3.19" > Dockerfile
           echo "RUN apk add --no-cache iptables iproute2 wireguard-tools" >> Dockerfile
-          echo "COPY --from=golang:1.22-alpine /usr/bin/wg-quick /usr/bin/wg-quick" >> Dockerfile
           echo "COPY amneziawg-go /usr/bin/amneziawg-go" >> Dockerfile
           echo "COPY entrypoint.sh /entrypoint.sh" >> Dockerfile
           echo "RUN chmod +x /entrypoint.sh /usr/bin/amneziawg-go" >> Dockerfile
@@ -45,7 +33,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Valid Image with Manifest
+      - name: Assemble Tar Archive with Manifest
         run: |
           docker buildx build \
             --platform linux/arm64/v8 \
@@ -53,11 +41,11 @@ jobs:
             --tag amnezia-wg-mikrotik:latest \
             .
 
-      - name: Save Correnct Tar for MikroTik
+      - name: Save Archive for MikroTik
         run: |
           docker save amnezia-wg-mikrotik:latest -o awg-correct-arm64.tar
 
-      - name: Upload Finished Tar with Binaries
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: amneziawg-mikrotik-arm64
