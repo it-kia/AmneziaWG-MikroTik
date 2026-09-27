@@ -10,11 +10,37 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Create Temporary Docker Context
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22' # Требуемая версия для сборки AmneziaWG
+
+      - name: Compile AmneziaWG Binary for ARM64
         run: |
-          # Создаем пустой Dockerfile, так как нам нужна просто файловая система проекта
-          echo "FROM scratch" > Dockerfile
-          echo "COPY . /" >> Dockerfile
+          # Запускаем компиляцию под архитектуру MikroTik RB5009
+          id=$(docker create -v /go alpine:3.18)
+          docker cp $id:/go ./gopath
+          docker rm $id
+          
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -v ${{ github.workspace }}/gopath:/go \
+            -e GOPATH=/go \
+            -e GOOS=linux \
+            -e GOARCH=arm64 \
+            -w /app \
+            golang:1.22-alpine \
+            sh -c "apk add --no-cache make git tools && make build"
+
+      - name: Create Valid Dockerfile
+        run: |
+          # Создаем Dockerfile, который скопирует именно скомпилированные бинарники
+          echo "FROM alpine:3.19" > Dockerfile
+          echo "RUN apk add --no-cache iptables iproute2 wireguard-tools" >> Dockerfile
+          echo "COPY --from=golang:1.22-alpine /usr/bin/wg-quick /usr/bin/wg-quick" >> Dockerfile
+          echo "COPY amneziawg-go /usr/bin/amneziawg-go" >> Dockerfile
+          echo "COPY entrypoint.sh /entrypoint.sh" >> Dockerfile
+          echo "RUN chmod +x /entrypoint.sh /usr/bin/amneziawg-go" >> Dockerfile
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -31,7 +57,7 @@ jobs:
         run: |
           docker save amnezia-wg-mikrotik:latest -o awg-correct-arm64.tar
 
-      - name: Upload Finished Tar to GitHub Artifacts
+      - name: Upload Finished Tar with Binaries
         uses: actions/upload-artifact@v4
         with:
           name: amneziawg-mikrotik-arm64
